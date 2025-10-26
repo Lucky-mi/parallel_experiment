@@ -32,25 +32,32 @@ void* gemm_worker_2d(void* arg){
             for(int j=col_start;j<col_end;j++){
                 double sum=0.0;
                 for(int k_gemm=0;k_gemm<N;k_gemm++)
-                sum+=(data->A[i*N+k_gemm])*(data->B[k_gemm*N+j]);
+                    sum+=(data->A[i*N+k_gemm])*(data->B[k_gemm*N+j]);
+                data->C[i*N+j]=sum;
             }
-            data->C[i*N+j]=sum;
+           
         }
     }
 }
 
 int main(int argc,char *argv[]){
     //初始化并检查参数正确
+
     if(argc!=3)
     {
     fprintf(stderr,"Usage:%s <matrix_size> <num_threads>\n",argv[0]);
     return 1;}
-
     int N=atoi(argv[1]);
     int T=atoi(argv[2]);
     printf("Matrix size:%d x %d,Threads:%d\n",N,N,T);
+    //计算tile数量
+    const int TILE_SIZE=16;
+    int num_dim=(N+TILE_SIZE-1)/TILE_SIZE;
+    int total_tiles=num_dim*num_dim;
     pthread_t threads[T];
-    gemm_thread_data_t thread_data[T];
+    //分配任务
+    gemm_thread_2d_t thread_data[T];
+    int tiles_per_thread=total_tiles/T;
     double* A=(double*)malloc(N*N*sizeof(double));
     double* B=(double*)malloc(N*N*sizeof(double));
     double* C=(double*)malloc(N*N*sizeof(double));
@@ -66,19 +73,22 @@ int main(int argc,char *argv[]){
         thread_data[i].A=A;
         thread_data[i].B=B;
         thread_data[i].C=C_parallel;
-        thread_data[i].start_row=i*rows_per_thread;
+        thread_data[i].tile_size=TILE_SIZE;
+        thread_data[i].num_dim=num_dim;
+        thread_data[i].start_idx=i*tiles_per_thread;
+        thread_data[i].end_idx=(i+1)*tiles_per_thread;
         //让最后一个线程把没做完的部分都做完，防止无法整除
         if(i==T-1){
-            thread_data[i].end_row=N;
+            thread_data[i].end_idx=total_tiles;
         }
         else 
-            thread_data[i].end_row=(i+1)*rows_per_thread;
+            thread_data[i].end_idx=(i+1)*tiles_per_thread;
     }
     struct timeval start,end;
     gettimeofday(&start,NULL);
     //创建线程
     for(int i=0;i<T;i++){
-        pthread_create(&threads[i],NULL,gemm_worker,(void*)&thread_data[i]);
+        pthread_create(&threads[i],NULL,gemm_worker_2d,(void*)&thread_data[i]);
     }
     for(int i=0;i<T;i++){
         pthread_join(threads[i],NULL);
